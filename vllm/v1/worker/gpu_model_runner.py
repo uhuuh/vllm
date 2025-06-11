@@ -59,6 +59,8 @@ else:
 
 logger = init_logger(__name__)
 
+from viztracer import get_tracer, VizTracer
+from objprint import objstr
 
 class GPUModelRunner(LoRAModelRunnerMixin):
 
@@ -1005,6 +1007,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         scheduler_output: "SchedulerOutput",
         intermediate_tensors: Optional[IntermediateTensors] = None,
     ) -> Union[ModelRunnerOutput, torch.Tensor]:
+        get_tracer().log_instant("hzk|prepare_input|scheduler_output", args=str(scheduler_output))
         # Update KVConnector with the KVConnector metadata forward().
         if has_kv_transfer_group():
             get_kv_transfer_group().bind_connector_metadata(
@@ -1018,6 +1021,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # Prepare the decoder inputs.
         attn_metadata, logits_indices, spec_decode_metadata = (
             self._prepare_inputs(scheduler_output))
+        info = {
+            "scheduler_output": str(scheduler_output),
+            "attn_metadata": str(attn_metadata),
+        }
+        get_tracer().log_instant("hzk|prepare_input", args=info)
+
         num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
         if (self.use_cuda_graph
                 and num_scheduled_tokens <= self.cudagraph_batch_sizes[-1]):

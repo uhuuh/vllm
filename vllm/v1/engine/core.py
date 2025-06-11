@@ -38,12 +38,31 @@ from vllm.v1.serial_utils import MsgpackDecoder, MsgpackEncoder
 from vllm.v1.structured_output import StructuredOutputManager
 from vllm.version import __version__ as VLLM_VERSION
 
+from viztracer import get_tracer, VizTracer
+from objprint import objjson
+import atexit
+
+tracer = VizTracer(
+    tracer_entries=int(1e6),
+    log_async=True,
+    pid_suffix=True,
+    max_stack_depth=0,
+)
+tracer.enable_thread_tracing()
+tracer.start()
+
+def cleanup():
+    tracer.stop()
+    tracer.save()
+atexit.register(cleanup)
+
 logger = init_logger(__name__)
 
 POLLING_TIMEOUT_S = 2.5
 
 _R = TypeVar('_R')  # Return type for collective_rpc
 
+from loguru import logger as ll
 
 class EngineCore:
     """Inner loop of vLLM's Engine."""
@@ -200,7 +219,11 @@ class EngineCore:
                 scheduler_stats=self.scheduler.make_stats(),
             )
         scheduler_output = self.scheduler.schedule()
+        get_tracer().log_instant(f"hzk|scheduler", args=str(scheduler_output))
+
         output = self.model_executor.execute_model(scheduler_output)
+        get_tracer().log_instant(f"hzk|output", args=str(output))
+
         engine_core_outputs = self.scheduler.update_from_output(
             scheduler_output, output)  # type: ignore
 
