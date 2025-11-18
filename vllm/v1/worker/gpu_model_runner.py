@@ -1179,6 +1179,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             else:
                 # TODO(woosuk): Refactor this.
                 num_draft_tokens = spec_decode_metadata.num_draft_tokens
+                # 如果所有draft token都被接受，并且带上一个bonus token，下面的计算结果会是负数吗？
                 num_rejected_tokens = [
                     n + 1 - len(valid_sampled_token_ids[i]) if n > 0 else 0
                     for i, n in enumerate(num_draft_tokens)
@@ -1197,6 +1198,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 target_hidden_states = hidden_states[token_indices]
                 target_slot_mapping = attn_metadata.slot_mapping[token_indices]
 
+            # 为什么使用验证模型的block table这样不会造成污染吗？草稿模型进行自回归时，存入cache污染验证模型的
             draft_token_ids, draft_probs = self.drafter.propose(
                 target_token_ids=target_token_ids,
                 target_positions=target_positions,
@@ -1208,10 +1210,14 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 sampling_metadata=sampling_metadata,
             )
             spec_token_ids = draft_token_ids.tolist()
+            # 后面的版本有实现这个机制吗？
             # TODO(woosuk): Cache draft_probs and use it for rejection sampling
             # in the next step.
             del draft_probs
 
+        # schedule 是如何知道哪些tokne被拒绝了呢？
+        # schedule的update from output会将sample tokens与之前req的spec tokens对比，这样知道哪些token被接受了
+        # spec token如果给接受，会回到sample tokens中，然后schedule update from output更新req状态
         return ModelRunnerOutput(
             req_ids=self.input_batch.req_ids,
             req_id_to_index=self.input_batch.req_id_to_index,

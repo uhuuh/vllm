@@ -46,6 +46,8 @@ class EagleProposer:
         batch_size = next_token_ids.shape[0]
         last_token_indices = cu_num_tokens[1:] - 1
 
+        # 为什么这里要移位，移位后token能与slot mapping对应吗？
+        # 为什么使用验证模型的block table？会是草稿模型在不同的层吗？那里过去的token如何存在?
         input_ids = torch.empty_like(target_token_ids)
         # Shift the input ids by one token.
         # E.g., [a1, b1, b2, c1, c2, c3] -> [b1, b2, c1, c2, c3, c3]
@@ -94,6 +96,7 @@ class EagleProposer:
         draft_token_ids_list = [draft_token_ids]
         draft_probs_list = [draft_probs]
 
+        # 万一生成的token超过分配的block资源呢？
         positions = target_positions[last_token_indices]
         hidden_states = sample_hidden_states
         attn_metadata.num_actual_tokens = batch_size

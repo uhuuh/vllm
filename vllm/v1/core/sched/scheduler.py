@@ -584,7 +584,9 @@ class Scheduler(SchedulerInterface):
                 # len(scheduled_spec_token_ids) + 1 - len(generated_token_ids).
                 num_tokens_rejected = (len(scheduled_spec_token_ids) + 1 -
                                        len(generated_token_ids))
+                # 等价于 rej = spec - (gen - 1), gen里面包含了额外的从验证模型生成的token
                 request.num_computed_tokens -= num_tokens_rejected
+                # 正常情况下，在schedule中才进行req computed token的修改
 
                 if spec_decoding_stats is not None:
                     spec_decoding_stats.observe(
