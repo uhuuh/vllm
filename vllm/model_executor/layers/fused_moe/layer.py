@@ -527,6 +527,7 @@ class FusedMoE(CustomOp):
             self.vllm_config.model_config is not None
             and self.vllm_config.model_config.enable_return_routed_experts
         ):
+            # NOTE profile run 这个要注意一下
             # In dummy runs, the capturer is not initialized.
             capturer = RoutedExpertsCapturer.get_instance()
             if capturer is not None:

@@ -244,6 +244,7 @@ class Scheduler(SchedulerInterface):
             self.perf_metrics = ModelMetrics(vllm_config)
 
         if self.vllm_config.model_config.enable_return_routed_experts:
+            # TODO decode context parallel和prefill context parallel是什么
             assert self.dcp_world_size == 1 and self.pcp_world_size == 1, (
                 "enable_return_routed_experts does not support context parallelism "
                 "(dcp_world_size > 1 or pcp_world_size > 1)"
@@ -251,9 +252,13 @@ class Scheduler(SchedulerInterface):
 
             self.routed_experts_reader = RoutedExpertsReader.create()
 
+            # NOTE 什么情况下没有kv cache group，attention中没有使用cache吗？
+            # ----------- 只有kv cache group大于0, 才有cache, 才有slot mapping
             assert len(kv_cache_config.kv_cache_groups) > 0, (
                 "enable_return_routed_experts requires at least one kv cache group"
             )
+            # TODO 每个kv cache group使用一样的块数吗？
+            # 为什么除后加1，而不是ceil div
             self.max_num_kv_tokens = (
                 kv_cache_config.num_blocks // len(kv_cache_config.kv_cache_groups) + 1
             ) * self.block_size
@@ -1496,7 +1501,7 @@ class Scheduler(SchedulerInterface):
 
         kv_blocks = self.kv_cache_manager.get_blocks(request.request_id)
         block_ids = kv_blocks.get_block_ids()[0]
-        num_tokens = request.num_tokens - 1
+        num_tokens = request.num_tokens - 1 # 这里确实需要减1，只有num tokens - 1个tokens才参与计算，有对应的expert ids，最有一个token是左右一步sample得到的
 
         # compute slot mapping
         block_ids_array = np.array(block_ids, dtype=np.int32)

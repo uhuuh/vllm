@@ -3273,6 +3273,8 @@ class GPUModelRunner(
         if self.vllm_config.model_config.enable_return_routed_experts:
             capturer = RoutedExpertsCapturer.get_instance()
             if capturer is not None:
+                # NOTE 为什么要清楚device buffer呢，直接访那里不行吗？
+                # 大概率只是一种防御性编程
                 capturer.clear_buffer()  # noqa
             else:
                 logger.error("RoutedExpertsCapturer not initialized.")
@@ -3707,6 +3709,9 @@ class GPUModelRunner(
             if self.model_config.enable_return_routed_experts:
                 capturer = RoutedExpertsCapturer.get_instance()
                 if capturer is not None:
+                    # NOTE 这里不会有问题吗？如果是async scheduling，device上可能没有执行完就返回了???
+                    # ---------- 这里有host到device上的拷贝，如果在同一个流上，会等待所有device上操作完成，因此不会有这个问题
+                    # 但是感觉这样操作，async scheduling的forward和前后处理的异步，优势就没有了
                     capturer.save_captured_experts(indices=self.slot_mapping)  # noqa
                 else:
                     logger.error("RoutedExpertsCapturer not initialized.")

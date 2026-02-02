@@ -53,6 +53,7 @@ def _create_or_attach_shared_memory(
         pass
 
     with _file_lock(lock_file):
+        # 要注意一下这里面的逻辑，代码更鲁棒
         try:
             shm = shared_memory.SharedMemory(name=name, create=True, size=size)
         except FileExistsError:
@@ -128,6 +129,7 @@ class RoutedExpertsCapturer:
         num_layers = hf_config.num_hidden_layers
         num_experts_per_tok = hf_config.num_experts_per_tok
 
+        # 这里实际按照了所有层来创建，但是有些层不是moe层，因此device buffer上有些是多余的
         # Initialize device buffer
         self._device_buffer = torch.zeros(
             (max_num_batched_tokens, num_layers, num_experts_per_tok),
@@ -136,6 +138,9 @@ class RoutedExpertsCapturer:
         )
         self.dp_rank = vllm_config.parallel_config.data_parallel_rank
 
+        # NOTE 为什么是前面这里返回，而不是最开始就返回呢？
+        # ------ 从save captured expert从来看, 只有rank0返回, 实际上其他rank也可以不初始化device buffer
+        # 没有挪到前面, 可能不太重要把
         if get_tensor_model_parallel_rank() != 0:
             return
 
@@ -143,9 +148,12 @@ class RoutedExpertsCapturer:
         shape = (max_num_kv_tokens, num_layers, num_experts_per_tok)
         buffer_size = int(np.prod(shape)) * np.dtype(np.int32).itemsize
         instance_id = vllm_config.instance_id
+        # 为了支持tp+dp，id中要加上dp rank
         self._lock_file = f"{_LOCK_FILE_PREFIX}_{instance_id}_{self.dp_rank}.lock"
         shm_name = f"{_BUFFER_PREFIX}_{instance_id}_{self.dp_rank}"
 
+        # 应该再看一下，shm和loak file的创建顺序
+        # ------ 由于要先profile run后初始化scheduler, 所以这里会先执行, 多做一些清理残留shm的工作
         self._shm = _create_or_attach_shared_memory(
             shm_name, buffer_size, self._lock_file
         )
@@ -166,6 +174,7 @@ class RoutedExpertsCapturer:
             layer_id: The layer index.
             topk_ids: Tensor of shape (batch_size, num_routed_experts).
         """
+        # NOTE 要区分moe中使用ep和不适用ep的两种场景
         if self._device_buffer is None:
             raise RuntimeError("Buffer not initialized. Call init_buffer() first.")
 
@@ -175,12 +184,15 @@ class RoutedExpertsCapturer:
             end_loc = topk_ids.shape[0]
             token_num_per_dp = topk_ids.shape[0]
         else:  # multi dp
+            # 多dp的话，moe层是处理所有token，应该当前dp所在的哪些token
             token_num_per_dp = ctx.dp_metadata.num_tokens_across_dp_cpu[self.dp_rank]
             cumsum = torch.cumsum(ctx.dp_metadata.num_tokens_across_dp_cpu, dim=0)
+            # 支持每个pd对应的token数量不一样
             assert cumsum[-1] == topk_ids.shape[0]
             end_loc = cumsum[self.dp_rank]
             start_loc = end_loc - token_num_per_dp
 
+        # 这里不应该报个错吗？为什么直接就反悔了
         if layer_id >= self._device_buffer.shape[1]:
             return
 
@@ -193,6 +205,7 @@ class RoutedExpertsCapturer:
         if self._device_buffer is not None:
             self._device_buffer.zero_()
 
+    # capture一层，save所有层，后面get是一个请求的所有计算token的所有层
     def save_captured_experts(self, indices: np.ndarray) -> None:
         """
         Save captured experts from device buffer to shared memory.
@@ -221,6 +234,10 @@ class RoutedExpertsCapturer:
             try:
                 self._shm.close()
                 self._shm.unlink()
+            # 注意这里会屏蔽所有异常，如果capturer已经释放，那么这里再释放应该会有一个异常
+            # C++中可以捕获异常，但是不应该将异常向上抛出
+            # NOTE 为什么不用处理lock文件
+            # ----- 可能因为lock文件没有内容, 占用资源少
             except Exception:
                 logger.debug("Exception during cleanup for capturer", exc_info=True)
             finally:
@@ -292,11 +309,14 @@ class RoutedExpertsReader:
         shm_name = f"{_BUFFER_PREFIX}_{instance_id}_{self.dp_rank}"
 
         with _file_lock(self._lock_file, mode="rb+"):
+            # TODO 这里的作用还不清楚
+            # 连接一个已存在的共享内存，并且刻意阻止 Python 的 resource_tracker 介入，以避免共享内存在某个进程退出时被错误删除
             # Avoid resource_tracker registering the shared memory
             with patch(
                 "multiprocessing.resource_tracker.register",
                 lambda *args, **kwargs: None,
             ):
+                # 这里的行为等同于shm = shared_memory.SharedMemory(name=name, create=True, size=size)
                 self._shm = shared_memory.SharedMemory(name=shm_name)
 
             self._host_buffer_view = np.ndarray(
