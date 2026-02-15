@@ -123,11 +123,12 @@ class Scheduler:
         running: List[SequenceGroup] = []
         preempted: List[SequenceGroup] = []
         while self.running:
-            seq_group = self.running.pop(0)
+            seq_group = self.running.pop(0) # sorted对象, 可以调用pop吗? ------ 可以
+            # 现在还没有实现chunk prefill, 因此在running队列中都是decode请求, 只需要append block, 最多只申请一个block
             while not self.block_manager.can_append_slot(seq_group):
                 if self.running:
                     # Preempt the lowest-priority sequence groups.
-                    victim_seq_group = self.running.pop(-1)
+                    victim_seq_group = self.running.pop(-1) # victim是受害者
                     self._preempt(victim_seq_group, blocks_to_swap_out)
                     preempted.append(victim_seq_group)
                 else:
@@ -197,13 +198,15 @@ class Scheduler:
 
                 # The total number of sequences in the RUNNING state should not
                 # exceed the maximum number of sequences.
+                # seq group的prefill计算只需要计算一次, 为什么这里的req num约束使用的是seq group中的所有seq数量
+                # 因为max_num_seqs限制的是同时运行的序列总数，而非请求数。一个seq_group可能有best_of个序列（如n=3, best_of=5），这些序列在decode阶段都需要独立运行。如果只按seq_group计数，可能导致实际序列数超出GPU内存承载能力。
                 num_new_seqs = seq_group.num_seqs(status=SequenceStatus.WAITING)
                 num_curr_seqs = len(self.running)
                 if num_curr_seqs + num_new_seqs > self.scheduler_config.max_num_seqs:
                     break
 
                 seq_group = self.waiting.pop(0)
-                self._allocate(seq_group)
+                self._allocate(seq_group) # 注意这里是alloc而不是append, 只针对seq group中的首seq分配block table, 然后其余seq拷贝, prefill阶段共用block table
                 self.running.append(seq_group)
                 num_batched_tokens += num_prompt_tokens
                 prompt_group_ids.append(seq_group.request_id)
@@ -298,6 +301,7 @@ class Scheduler:
                     # Free the current sequence.
                     self.block_manager.free(seq)
                     # Fork the parent sequence.
+                    # 当使用beam search时, 一个seq sample出多个token时, 需要对这个seq进行fork, 以共用前缀信息, 多余没有sample token的seq应该被free
                     parent_seq = seq_group.find(output.parent_seq_id)
                     parent_seq.fork(seq)
                     self.block_manager.fork(parent_seq, seq)
@@ -359,11 +363,13 @@ class Scheduler:
         # sequences. This may require a more sophisticated CUDA kernel.
         if preemption_mode is None:
             seqs = seq_group.get_seqs(status=SequenceStatus.RUNNING)
+            # 为什么只有best of n为1的时候, 才支持重计算 ------- ，同一组内多个序列可能共享物理块（fork后COW）。重计算会丢弃这些块，导致无法恢复fork关系。swap可以保留完整的块引用关系。代码注释（scheduler.py:361-362）也提到支持多序列重计算需要更复杂的CUDA kernel。
+            # TODO 后面的vllm版本应该只使用了重计算, 看一下后面的版本的如何解决这个问题
             if len(seqs) == 1:
                 preemption_mode = PreemptionMode.RECOMPUTE
             else:
                 preemption_mode = PreemptionMode.SWAP
-        if preemption_mode == PreemptionMode.RECOMPUTE:
+        if preemption_mode == PreemptionMode.RECOMPUTE: # 原来在0.1的时候, 就有重计算和swap了
             self._preempt_by_recompute(seq_group)
         elif preemption_mode == PreemptionMode.SWAP:
             self._preempt_by_swap(seq_group, blocks_to_swap_out)

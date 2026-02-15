@@ -81,5 +81,8 @@ if __name__ == "__main__":
     engine_args = AsyncEngineArgs.from_cli_args(args)
     engine = AsyncLLMEngine.from_engine_args(engine_args)
 
+    # FastAPI 负责处理请求、业务逻辑、路由等，而 Uvicorn 是ASGI服务器, 负责提供服务、监听端口、处理 HTTP 请求并将其传递给 FastAPI 应用
+    # ASGI 应用必须是一个可调用对象（callable），它接受一个 scope、receive 和 send 参数，并根据这些信息处理 HTTP 请求
+    # ASGI 和 WSGI 都是 Python Web 应用程序的接口规范，它们用于定义 Web 服务器如何与 Web 应用程序进行通信。虽然它们的目的是相同的——即提供一种通用的接口来连接 Web 服务器和 Web 应用程序，但 ASGI 是 WSGI 的继任者，并且提供了许多新特性，尤其是在 异步编程 和 实时通信 方面
     uvicorn.run(app, host=args.host, port=args.port, log_level="debug",
                 timeout_keep_alive=TIMEOUT_KEEP_ALIVE)

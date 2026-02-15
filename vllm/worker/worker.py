@@ -64,6 +64,8 @@ class Worker:
         gpu_memory_utilization: float,
         cpu_swap_space: int,
     ) -> Tuple[int, int]:
+        # 它的profile run是如何处理的, 可以在没有cache的情况下执行
+        # ------ profile run跑的是全prefill请求, 是fa不是pa, 不需要cache, 然后reshape and cache的时候有做特殊判断, 没有传入cache, 就不调用这个算子
         # Profile the memory usage of the model and get the maximum number of
         # cache blocks that can be allocated with the remaining free memory.
         torch.cuda.empty_cache()
@@ -132,6 +134,7 @@ class Worker:
         self,
         seq_group_metadata_list: List[SequenceGroupMetadata],
     ) -> Tuple[torch.Tensor, torch.Tensor, InputMetadata]:
+        # scheduler应该按照req到达顺序处理, 如何之类进行prefill和decode重排, 那么后面如何满足这个约定 ----- scheduler的update方法中, 是按照当前的running队列来的, 可以保证新插入的请求在后面, 尽管prefill和decode重排将prefill放在了前面
         seq_groups: List[Tuple[List[int], SamplingParams]] = []
         input_tokens: List[int] = []
         input_positions: List[int] = []
@@ -211,6 +214,8 @@ class Worker:
 
         # Optimization: Pad the input length to be a multiple of 8.
         # This is required for utilizing the Tensor Cores in NVIDIA GPUs.
+        # 这里针对输入padding, 好像没有看到unpadding操作
+        # 在attention层（使用xformers）, mask基于prompt_lens（有效长度）构建，padding位置的attention权重会被mask掉
         input_tokens = _pad_to_alignment(input_tokens, multiple_of=8)
         input_positions = _pad_to_alignment(input_positions, multiple_of=8)
 

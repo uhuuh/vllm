@@ -42,7 +42,7 @@ class SamplingParams:
 
     def __init__(
         self,
-        n: int = 1,
+        n: int = 1, # n 与 best of 在代码上具体在哪里生效的 ------ best_of：在llm_engine.py:183决定创建多少个序列, n：在RequestOutput.from_seq_group中决定返回前n个序列的结果
         best_of: Optional[int] = None,
         presence_penalty: float = 0.0,
         frequency_penalty: float = 0.0,

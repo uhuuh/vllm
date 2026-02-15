@@ -91,6 +91,8 @@ class BlockSpaceManager:
         seq = seq_group.get_seqs()[0]
 
         # Allocate new physical token blocks that will store the prompt tokens.
+        # 创建seq时, logical_token_blocks好像没有设置, 那么prefill中block table都是空列表吗?
+        # ------ _append_tokens_to_blocks 在创建seq时候会被调用
         block_table: BlockTable = []
         for _ in range(len(seq.logical_token_blocks)):
             block = self.gpu_allocator.allocate()

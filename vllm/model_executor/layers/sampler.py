@@ -39,6 +39,13 @@ class Sampler(nn.Module):
     ) -> Dict[int, SequenceOutputs]:
         # Get the hidden states that we use for sampling.
         hidden_states = _prune_hidden_states(hidden_states, input_metadata)
+        # sampler流程
+        # 从hidden states挑选出logits后
+        # 按照presence penalty, freq penalty, temperature处理logits
+        # logits计算得到logp
+        # 按照topk和toppc处理logp
+        # 按照best_of和temperature生成next tokens, temperature为0时要求best of为1
+        # 根据logprobs和next tokens生成next_logprobs
 
         # Get the logits for the next tokens.
         logits = torch.matmul(hidden_states, embedding.t())
@@ -52,10 +59,15 @@ class Sampler(nn.Module):
         presence_penalties, frequency_penalties = _get_penalties(input_metadata)
         assert len(presence_penalties) == logits.shape[0]
         assert len(frequency_penalties) == logits.shape[0]
+        # presence_penalties只要出现了, 该位置的logits就减少presence_penalties
+        # frequency_penalties是对应位置的logits减少出现次数乘上frequency_penalties
+        # 这里是对logits进行操作, 而不是logp上进行操作. 如果在logp上进行操作, 操作完之后, 应该要重新归一化
         logits = _apply_penalties(
             logits, output_tokens, presence_penalties, frequency_penalties,
             self.vocab_size)
 
+        # 这部分好像没有体现温度为0的时候, 就是确定的
+        # ------ 确定性体现在_sample_from_prompt和_sample_from_generation_tokens中使用torch.argmax（greedy）而非multinomial采样
         # Apply temperature scaling.
         temperatures = _get_temperatures(input_metadata)
         assert len(temperatures) == logits.shape[0]
@@ -71,6 +83,8 @@ class Sampler(nn.Module):
         # Compute the log probabilities (before applying top-p and top-k).
         logprobs = torch.log(probs)
 
+        # topp为什么不在logits上进行操作 ------- top-p（nucleus sampling）基于累积概率，必须在概率空间操作。在logits上操作无法直接计算累积概率和。Top-k可以在logits上操作（取前k个），但top-p不能
+        # 下面直接在prob上操作, 某些位置的prob可能设为0, 这样所有加和不为1, 这样合适吗? ------ multinomial接受非归一化的概率分布，内部会自动归一化。代码将不需要的token概率置0，multinomial只会从非零位置采样。
         # Apply top-p and top-k truncation.
         top_ps, top_ks = _get_top_p_top_k(input_metadata, self.vocab_size)
         assert len(top_ps) == len(top_ks) == probs.shape[0]
@@ -85,6 +99,7 @@ def _prune_hidden_states(
     hidden_states: torch.Tensor,
     input_metadata: InputMetadata,
 ) -> torch.Tensor:
+    # 前面是prefill请求后面是decode请求, 因此last token ind才这样计算
     start_idx = 0
     last_token_indicies: List[int] = []
     for prompt_len in input_metadata.prompt_lens:
@@ -236,6 +251,7 @@ def _apply_top_p_top_k(
 ) -> torch.Tensor:
     p = torch.tensor(top_ps, dtype=probs.dtype, device=probs.device)
     k = torch.tensor(top_ks, dtype=torch.int, device=probs.device)
+    # prob是一个二维的, [num seq, vocab size]
     probs_sort, probs_idx = probs.sort(dim=-1, descending=True)
 
     # Apply top-p.
@@ -296,7 +312,7 @@ def _sample_from_prompt(
         # Sample `best_of` tokens for the prompt.
         num_seqs = sampling_params.best_of
         next_token_ids = torch.multinomial(
-            prob, num_samples=num_seqs, replacement=True)
+            prob, num_samples=num_seqs, replacement=True) # replacement=True说明可以重复采样同一个样本
         next_token_ids = next_token_ids.tolist()
     return next_token_ids
 
@@ -312,19 +328,24 @@ def _sample_from_generation_tokens(
     # len(seq_ids) because some sequences in the group might have
     # been already terminated.
     if sampling_params.use_beam_search:
+        # TODO
         # Beam search.
         # Add cumulative logprobs for the sequences in the group.
         seq_logprobs = torch.tensor(
             seq_logprobs, dtype=torch.float, device=logprobs.device)
         logprobs = logprobs + seq_logprobs.unsqueeze(dim=1)
+        # NOTE 为什么beam search使用的是logp的累加值, 而不是累计乘值等其他 -------
+        # 率的加法可以通过对数概率的加法来实现。由于对数函数的单调性，log(a * b) = log(a) + log(b)，所以在 Beam Search 中，我们用 对数概率的累加值 来累积概率，以避免数值下溢问题。
+        # log操作可以减少上溢出和下溢出, 随着接近0的过程中放大, 同时也减少了扩张趋势
 
         vocab_size = logprobs.size(-1)
         beam_width = len(seq_ids)
+        # logprobs是二维, [num seq, vocab size]
         _, topk_ids = torch.topk(logprobs.flatten(), beam_width)
         topk_ids = topk_ids.tolist()
-        seq_idx = [i // vocab_size for i in topk_ids]
-        beam_seq_ids = [seq_ids[i] for i in seq_idx]
-        token_ids = [i % vocab_size for i in topk_ids]
+        seq_idx = [i // vocab_size for i in topk_ids] # [num seq * beam width]
+        beam_seq_ids = [seq_ids[i] for i in seq_idx] # [num seq * beam width]
+        token_ids = [i % vocab_size for i in topk_ids] # [num seq * beam width]
 
         beam_outputs: Dict[int, Tuple[int, int]] = {}
         outstanding_beams: List[Tuple[int, int]] = []
@@ -333,6 +354,7 @@ def _sample_from_generation_tokens(
             if seq_id not in beam_outputs:
                 beam_outputs[seq_id] = (seq_id, token_id)
             else:
+                # 出现在outstanding_beams说明, 一个seq有超过一个token被采样到了
                 outstanding_beams.append((seq_id, token_id))
 
         # If a beam is discarded, fork another beam.
@@ -377,6 +399,7 @@ def _sample(
             logprob = logprobs[idx]
             idx += 1
 
+            # logprobs控制返回信息中的最大logp的数量, 与sample next token无关
             # Sample the next tokens.
             next_token_ids = _sample_from_prompt(prob, sampling_params)
             # Get top-k log probabilities for the next tokens.
@@ -385,6 +408,7 @@ def _sample(
 
             # Build the output.
             for seq_id, next_token_id in zip(seq_ids, next_token_ids):
+                # 最后返回的output_logprobs是两部分的并集, 一部分是logprobs设置最大某些数量的logp, 一个是next tokens对应的logp
                 output_logprobs = next_logprobs.copy()
                 output_logprobs[next_token_id] = logprob[next_token_id].item()
                 seq_outputs[seq_id] = SequenceOutputs(
@@ -399,6 +423,7 @@ def _sample(
             seq_logprobs = [
                 input_metadata.seq_data[seq_id].cumulative_logprob
                 for seq_id in seq_ids]
+            # TODO parent_seq_ids
             parent_seq_ids, next_token_ids = _sample_from_generation_tokens(
                 seq_ids, prob, logprob, seq_logprobs, sampling_params)
 

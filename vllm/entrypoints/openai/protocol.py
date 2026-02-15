@@ -68,24 +68,24 @@ class ChatCompletionRequest(BaseModel):
 class CompletionRequest(BaseModel):
     model: str
     prompt: str
-    suffix: Optional[str] = None
+    suffix: Optional[str] = None # 返回的文本, 额外附加的文本
     max_tokens: Optional[int] = 16
     temperature: Optional[float] = 1.0
     top_p: Optional[float] = 1.0
     n: Optional[int] = 1
     stream: Optional[bool] = False
     logprobs: Optional[int] = None
-    echo: Optional[bool] = False
+    echo: Optional[bool] = False # 返回的文本包含prompt
     stop: Optional[Union[str, List[str]]] = Field(default_factory=list)
     presence_penalty: Optional[float] = 0.0
     frequency_penalty: Optional[float] = 0.0
     best_of: Optional[int] = None
-    logit_bias: Optional[Dict[str, float]] = None
+    logit_bias: Optional[Dict[str, float]] = None # logit_bias 是一个字典，其中键是 token 的 ID（即在词汇表中的索引），值是你希望加到该 token 的 logit 值（通常是一个浮动的数值，可以是正值或负值）, 以此来调整某些token的生成概率
     user: Optional[str] = None
     # Additional parameters supported by vLLM
     top_k: Optional[int] = -1
     ignore_eos: Optional[bool] = False
-    use_beam_search: Optional[bool] = False
+    use_beam_search: Optional[bool] = False # n>1, 不就是使用了beam search吗? 为什么要额外增加这个参数 ------- 两种情况不一样, 当best of 大于1时, 如果没有beam search 每个都单独处理, 如果有所有的logp中挑选中best of个
 
 
 class LogProbs(BaseModel):

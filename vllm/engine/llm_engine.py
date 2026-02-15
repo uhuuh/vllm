@@ -172,18 +172,22 @@ class LLMEngine:
         """
         if arrival_time is None:
             arrival_time = time.time()
-        if prompt_token_ids is None:
+        if prompt_token_ids is None: # 什么情况下, prompt_token_ids会从外部传入 ------- 只能说有可能出现这种情况
             assert prompt is not None
             prompt_token_ids = self.tokenizer.encode(prompt)
 
         # Create the sequences.
         block_size = self.cache_config.block_size
         seqs: List[Sequence] = []
+        # 为什么这里是best_of, 而不是n ------- 引擎需要先生成best_of个候选序列，然后再从中选出最好的n个
         for _ in range(sampling_params.best_of):
             seq_id = next(self.seq_counter)
+            # 为什么seq id在这里设置, 外部也会设置类似seq id的东西
+            # seq_id是vLLM内部用于跟踪单个序列的唯一标识（用于block_manager映射）。外部的request_id是用户级别的请求标识。一个request可能产生多个seq（best_of > 1），每个seq有独立的seq_id，但共享同一个request_id。
             seq = Sequence(seq_id, prompt, prompt_token_ids, block_size)
             seqs.append(seq)
 
+        # seq_group ------- 如果使用beam search, 一个req可能对应多个seq, 这个seq共享prefill产生的cache, 是同一个seq group
         # Create the sequence group.
         seq_group = SequenceGroup(request_id, seqs, sampling_params,
                                   arrival_time)

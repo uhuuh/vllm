@@ -88,6 +88,8 @@ class Sequence:
         self.output_tokens: List[str] = []
         self.output_text = ""
 
+        # 为什么要维护逻辑和物理两个部分的块表
+        # ------ 这里是逻辑块表, 块索引从0开始. https://github.com/vllm-project/vllm/pull/5882 这个pr把逻辑块表删除了, 也有一些性能提升
         self.logical_token_blocks: List[LogicalTokenBlock] = []
         # Initialize the logical token blocks with the prompt token ids.
         self._append_tokens_to_blocks(prompt_token_ids)
@@ -140,6 +142,7 @@ class Sequence:
         return self.data.output_token_ids
 
     def get_cumulative_logprob(self) -> float:
+        # cumulative_logprob 这个有什么用, 什么情况下需要这个 ------ 用于beam search中选择最优序列。累积对数概率越高，序列概率越大。在_sample_from_generation_tokens（sampler.py:335）用于计算beam的优先级。
         return self.data.cumulative_logprob
 
     def is_finished(self) -> bool:

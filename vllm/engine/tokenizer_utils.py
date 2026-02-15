@@ -50,6 +50,7 @@ def detokenize_incrementally(
     skip_special_tokens: bool,
 ) -> Tuple[str, str]:
     """Detokenizes the new token in conjuction with the previous output tokens.
+    # TODO pr介绍说这种增量detokenize有性能优化, 为什么呢?
 
     NOTE: This function does not update prev_output_tokens.
 
@@ -57,6 +58,12 @@ def detokenize_incrementally(
         new_token: The new token as a string.
         output_text: The new output text as a string.
     """
+    # special_tokens 一般划分内容, 比如<|endoftext|>, <|pad|>, <|mask|>等, 一般不用返回给用户
+    # skip_special_tokens为False, 这些特殊token对应的内容也会加到返回文本中
+    # convert_ids_to_tokens 从token id到token, convert_tokens_to_string从token到text
+    # convert_tokens_to_string的内部逻辑是先将 Token 映射回 Byte 序列，然后再执行 bytes.decode('utf-8', errors='replace')
+    # 当stream中, 一个token值对应一个中文字的一部分utf-8字节序列中的一部分中, 进行bytes.decode应该会有一些不正常的输出
+    # 需要使用特殊的decode, 如TextStreamer
     new_token = tokenizer.convert_ids_to_tokens(
         new_token_id, skip_special_tokens=skip_special_tokens)
     output_tokens = prev_output_tokens + [new_token]
@@ -77,6 +84,9 @@ def detokenize_incrementally(
     for token in output_tokens:
         if skip_special_tokens and token in tokenizer.all_special_ids:
             continue
+        # added_tokens_encoder 只有在 运行时 使用 add_tokens() 方法扩展 tokenizer 的词汇表时才会出现
+        # 下面是为了修复https://github.com/huggingface/transformers/blob/v4.28.0/src/transformers/tokenization_utils.py#L921中提到的一个bug
+        # added token不经过convert_tokens_to_string
         if token in tokenizer.added_tokens_encoder:
             if current_sub_text:
                 sub_text = tokenizer.convert_tokens_to_string(current_sub_text)

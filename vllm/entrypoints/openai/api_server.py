@@ -70,6 +70,8 @@ def create_logprobs(token_ids: List[int],
     logprobs = LogProbs()
     last_token_len = 0
     for token_id, id_logprob in zip(token_ids, id_logprobs):
+        # 这里的token实际上是文本, id_logprob是每个token位置上多个token候选对于的lopp
+        # 似乎tokenizer就应该多个位置存在, 想固定在某一个位置上菜使用tokenizer, 不太可能
         token = tokenizer.convert_ids_to_tokens(token_id)
         logprobs.tokens.append(token)
         logprobs.token_logprobs.append(id_logprob[token_id])
@@ -149,6 +151,9 @@ async def create_completion(raw_request: Request):
 
     # Similar to the OpenAI API, when n != best_of, we do not stream the
     # results. In addition, we do not stream the results when use beam search.
+    # 说实话, 还是不清楚, 为什么这些情况下需要使用stream
+    # ------- 需要等所有best_of个序列生成完，才能根据累积logp排序选出top-n。stream时无法确定最终返回哪些
+    # beam之间会fork/合并，某个beam可能在后续被淘汰。stream输出了被淘汰的beam会浪费/误导用户
     stream = (request.stream and
               (request.best_of is None or request.n == request.best_of) and
               not request.use_beam_search)
@@ -177,6 +182,9 @@ async def create_completion(raw_request: Request):
         return response_json
 
     async def completion_stream_generator() -> AsyncGenerator[str, None]:
+        # stream输出, 有多个data chunk组成, 前面是包含正常数据的chunk, 后面是一个包含index和finish reason的chunk, 最后是一个[DONE] chunk
+        # 数据chunk中, 可能返回长度稍长的text, token ids是token列表, logprobs是每个token位置上多个token候选对于的logprob
+        # 无论是否是stream输出, 返回的都是相同的格式, 只不过stream输出是每个chunk一个choice, 非stream输出是一个chunk中包含所有的choice
         previous_texts = [""] * request.n
         previous_num_tokens = [0] * request.n
         async for res in result_generator:
@@ -215,6 +223,7 @@ async def create_completion(raw_request: Request):
         background_tasks = BackgroundTasks()
         # Abort the request if the client disconnects.
         background_tasks.add_task(abort_request)
+        # TODO 不太清楚, 这个background_tasks有什么用, 以及具体什么情况下会被调用
         return StreamingResponse(completion_stream_generator(),
                                  media_type="text/event-stream",
                                  background=background_tasks)
