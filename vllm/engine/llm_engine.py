@@ -106,7 +106,7 @@ class LLMEngine:
             ray_usage = os.environ.get("RAY_USAGE_STATS_ENABLED", "0")
             if ray_usage != "1":
                 os.environ["RAY_USAGE_STATS_ENABLED"] = "0"
-            self._init_workers_ray(placement_group)
+            self._init_workers_ray(placement_group) # TODO 看一下ray是如何被使用的
         else:
             self._init_workers()
 

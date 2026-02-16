@@ -39,6 +39,7 @@ class ModelRunner:
 
         # model_config can be None in tests/samplers/test_sampler.py.
         # FIXME(woosuk): This is a hack to make the tests work. Refactor this.
+        # 滑动窗口注意力, 如何设置了, 输入也应该做相应修改
         self.sliding_window = (model_config.get_sliding_window()
                                if model_config is not None else None)
         self.model = None
@@ -447,9 +448,11 @@ class ModelRunner:
         # Execute the model.
         if input_metadata.use_cuda_graph:
             graph_batch_size = input_tokens.shape[0]
+            # cuda graph的实现与想象的差不多
             model_executable = self.graph_runners[graph_batch_size]
         else:
             model_executable = self.model
+        # execute model分为两个部分forward和sample，因为只有forward才可以使用cuda graph
         hidden_states = model_executable(
             input_ids=input_tokens,
             positions=input_positions,

@@ -96,14 +96,14 @@ class SamplingParams:
         best_of: Optional[int] = None,
         presence_penalty: float = 0.0,
         frequency_penalty: float = 0.0,
-        repetition_penalty: float = 1.0,
+        repetition_penalty: float = 1.0, # TODO
         temperature: float = 1.0,
         top_p: float = 1.0,
         top_k: int = -1,
-        min_p: float = 0.0,
+        min_p: float = 0.0, # TODO
         use_beam_search: bool = False,
-        length_penalty: float = 1.0,
-        early_stopping: Union[bool, str] = False,
+        length_penalty: float = 1.0, # TODO
+        early_stopping: Union[bool, str] = False, # TODO
         stop: Optional[Union[str, List[str]]] = None,
         stop_token_ids: Optional[List[int]] = None,
         include_stop_str_in_output: bool = False,
@@ -113,7 +113,7 @@ class SamplingParams:
         prompt_logprobs: Optional[int] = None,
         skip_special_tokens: bool = True,
         spaces_between_special_tokens: bool = True,
-        logits_processors: Optional[List[LogitsProcessor]] = None,
+        logits_processors: Optional[List[LogitsProcessor]] = None, # 为什么这个在sample param中 ------- 这个不是openai complete接口中的约定，好像可以用于结构化输出
     ) -> None:
         self.n = n
         self.best_of = best_of if best_of is not None else n

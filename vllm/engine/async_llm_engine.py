@@ -219,6 +219,8 @@ class _AsyncLLMEngine(LLMEngine):
         if driver_kwargs is None:
             driver_kwargs = kwargs
 
+        # 将server和scheduler塞在一个进程中, run_in_executor中第一个参数为None, 在当前进程的一个单独thread中执行传入的函数
+        # python 没有thread级别的并行执行, 如果是计算密集任务, 在任务执行过程中, EventLoop 只不会执行
         # Run the driver worker asynchronously.
         driver_executor = getattr(self.driver_worker, method)
         coros.append(asyncio.get_event_loop().run_in_executor(

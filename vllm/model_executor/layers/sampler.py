@@ -76,10 +76,12 @@ class Sampler(nn.Module):
         logits.div_(sampling_tensors.temperatures.unsqueeze_(dim=1))
 
         if do_top_p_top_k:
+            # 相比v0.1.0，现在topp和topk都在logits上操作
             logits = _apply_top_p_top_k(logits, sampling_tensors.top_ps,
                                         sampling_tensors.top_ks)
 
         if do_min_p:
+            # 在prob中选择最大的那个，即max logp，将小于max prob * min_p的左右位置上的logits都设为0
             logits = _apply_min_p(logits, sampling_tensors.min_ps)
 
         # We use float32 for probabilities and log probabilities.
@@ -90,9 +92,9 @@ class Sampler(nn.Module):
         logprobs = torch.log_softmax(logits, dim=-1, dtype=torch.float)
 
         # Sample the next tokens.
-        sample_results = _sample(probs, logprobs, sampling_metadata)
+        sample_results = _sample(probs, logprobs, sampling_metadata) # TODO
         # Get the logprobs query results.
-        prompt_logprobs, sample_logprobs = _get_logprobs(
+        prompt_logprobs, sample_logprobs = _get_logprobs( # TODO
             logprobs, sampling_metadata, sample_results)
         return _build_sampler_output(sample_results, sampling_metadata,
                                      prompt_logprobs, sample_logprobs)
@@ -158,6 +160,7 @@ def _apply_logits_processors(
         else:
             logits_row_idx += len(seq_ids)
     if found_logits_processors:
+        # 防御编程，确保经过logits processor后，生成的logits的首维度不变
         assert logits_row_idx == logits.shape[0]
     return logits
 
@@ -175,6 +178,7 @@ def _apply_penalties(logits: torch.Tensor, prompt_tokens_tensor: torch.Tensor,
 
     repetition_penalties = repetition_penalties[:, None].repeat(1, vocab_size)
     repetition_penalties[~(prompt_mask | output_mask)] = 1.0
+    # 缩放 Logits, 如果出现了，对应位置的logits除上一个乘法系数（一般大于1）而变小，否则乘上惩罚系数而变大
     logits = torch.where(logits > 0, logits / repetition_penalties,
                          logits * repetition_penalties)
 
@@ -306,7 +310,8 @@ def _beam_search_sample(
             # Prompt phase.
             assert num_parent_seqs == 1, (
                 "Prompt input should have only one seq.")
-            parent_ids = [0] * (2 * beam_width)
+            # parent ids 是0，什么时候这只为正确的值
+            parent_ids = [0] * (2 * beam_width) # TODO 为了确保即使有部分序列提前结束（遇到 EOS token），仍然有足够数量的候选序列继续生成。感觉还需要看一下什么时候终止
             _, next_token_ids = torch.topk(seq_group_logprobs[0],
                                            2 * beam_width)
             next_token_ids = next_token_ids.tolist()
@@ -360,6 +365,7 @@ def _sample(
     logprobs: torch.Tensor,
     sampling_metadata: SamplingMetadata,
 ) -> List[Tuple[List[int], List[int]]]:
+    # 汇集同一个sample type的所有seq group, 同时挑选出对应所有的logp
     categorized_seq_group_ids = {t: [] for t in SamplingType}
     categorized_sample_indices = sampling_metadata.categorized_sample_indices
     for i, seq_group in enumerate(sampling_metadata.seq_groups):
@@ -449,9 +455,9 @@ def _get_logprobs(
                 sample_idx + j for j in range(prompt_len - 1))
             batched_logprobs_query_token_indices.extend(
                 token_id for token_id in prompt_tokens[1:])
-            sample_idx += prompt_len - 1
+            sample_idx += prompt_len - 1 #
         batched_logprobs_query_seq_indices.extend(
-            [sample_idx + parent_id for parent_id in parent_ids])
+            [sample_idx + parent_id for parent_id in parent_ids]) # parent ids表示next_token_ids 中每个 token 来自哪个父序列
         batched_logprobs_query_token_indices.extend(next_token_ids)
         if sampling_params.logprobs is not None:
             largest_num_logprobs = max(largest_num_logprobs,
